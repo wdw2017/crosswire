@@ -22,6 +22,16 @@ Existing tools solve this for agents on the *same* machine:
 
 Nobody has packaged the **cross-machine** case. Until now.
 
+## Origin Story
+
+This started with a Raspberry Pi. I was building a custom OpenWrt travel router image on my Mac Studio — it had all the source code, the cross-compilation toolchain, the build infrastructure. But the MacBook was the machine physically connected to the Pi via USB, responsible for flashing SD cards and debugging over serial.
+
+Two Claude Code instances, two machines, one project. The Studio instance would build the image and tell the MacBook instance: *"Image ready. Pull it, flash the SD card, boot the Pi, and tell me what happens."* The MacBook instance would flash, test, and report back: *"DNS is broken — dnsmasq can't reach upstream."* The Studio instance would analyze its build config, find the root cause (nftables kill switch blocking port 53), push a fix, and send the next iteration.
+
+What surprised me was how naturally they developed a **collective double-reasoning loop** — one agent with deep build context directing another with physical hardware access, each contributing what the other couldn't do alone. The conversation threading (`--re`) kept context tight across the back-and-forth, and because messages are plain text files, I could always `cat` them to see exactly what was being communicated.
+
+I've since packaged it into a proper tool.
+
 ## What This Is
 
 A dead-simple communication protocol for AI coding agents that works across any machines with SSH access. It's:
@@ -31,6 +41,14 @@ A dead-simple communication protocol for AI coding agents that works across any 
 - **Agent-agnostic** -- works with Claude Code, Codex, Antigravity, or any agent that can run shell commands.
 - **Token-efficient** -- ~20 token message headers. Your agent spends tokens on work, not protocol overhead.
 - **Battle-tested** -- born from a real two-machine setup (MacBook + Mac Studio) that's been running for months.
+
+## Demo
+
+Two agents debugging a Raspberry Pi travel router — one builds, the other flashes and tests:
+
+<p align="center">
+  <img src="demo/demo.gif" alt="Demo: two Claude Code instances collaborating across machines" width="800">
+</p>
 
 ## How It Works
 
@@ -186,6 +204,86 @@ Four types:
 | `question` | I need information           | Yes            |
 | `reply`    | Here's my response           | Maybe          |
 | `info`     | FYI, no action needed        | No             |
+
+## Demo: Real Conversation
+
+This is generated from the actual protocol (`bash demo/generate-demo.sh`). Two agents debugging a Raspberry Pi travel router across machines:
+
+<details>
+<summary><b>Click to expand full demo session</b></summary>
+
+```
+[studio] User: "tell laptop to pull the image and flash it"
+
+[studio] $ comms send --to laptop task "OpenWrt image build complete.
+  Pull via scp, flash to 32GB SD card, report when Pi boots."
+→ Sent: f9931c0f
+
+[laptop] $ comms check
+f9931c0f  task  studio  OpenWrt image build complete.
+
+[laptop] $ comms read f9931c0f
+id: 20260309-011457-f9931c0f
+from: studio
+to: laptop
+type: task
+re:
+
+OpenWrt image build complete.
+Pull via: scp studio:travel-router/_build/openwrt-rpi5.img.gz .
+Flash to 32GB SD card with:
+  gunzip -k openwrt-rpi5.img.gz
+  sudo dd if=openwrt-rpi5.img of=/dev/diskN bs=4M status=progress
+Report back when the Pi boots and connects to WiFi.
+
+[laptop] — Flashes SD card, boots Pi, tests connectivity...
+
+[laptop] $ comms send reply --re f9931c0f "WiFi AP is up. DNS broken.
+  Suspect nftables kill switch blocking port 53."
+→ Sent: 8e75f5a7
+
+[studio] $ comms read 8e75f5a7
+id: 20260309-011457-8e75f5a7
+from: laptop
+to: studio
+type: reply
+re: f9931c0f
+
+Image flashed and Pi booted.
+WiFi AP is up (SSID: TravelRouter). Connected successfully.
+BUT: DNS not resolving. curl google.com fails.
+dnsmasq is running but upstream queries timeout.
+Suspect the nftables kill switch is blocking port 53.
+
+[studio] — Analyzes build config, finds root cause...
+
+[studio] $ comms send reply --re 8e75f5a7 "Port 53 exemption missing.
+  Add: nft add rule inet fw4 output udp dport 53 accept"
+→ Sent: ae83f410
+
+[laptop] — Applies fix on Pi, tests again...
+
+[laptop] $ comms send reply --re ae83f410 "ALL WORKING!
+  DNS resolves, VPN active, xray clean."
+→ Sent: eae02edb
+
+[studio] $ comms read eae02edb
+id: 20260309-011457-eae02edb
+from: laptop
+to: studio
+type: reply
+re: ae83f410
+
+ALL WORKING!
+DNS: google.com resolves via 127.0.0.1 (dnsmasq)
+VPN: curl ifconfig.me returns 203.0.113.42 (VPN server)
+Xray log: clean, no errors
+Travel router is fully operational.
+```
+
+4 messages. Bug found, diagnosed, fixed, verified. Two agents, two machines, one conversation thread.
+
+</details>
 
 ## CLI Reference
 
