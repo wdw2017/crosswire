@@ -37,7 +37,7 @@ json_set() {
     local file="$1" key="$2" value="$3"
     if command -v jq &>/dev/null; then
         local tmp="${file}.tmp.$$"
-        if jq "$key = $value" "$file" > "$tmp"; then
+        if jq --argjson v "$value" "$key = \$v" "$file" > "$tmp"; then
             mv "$tmp" "$file"
         else
             rm -f "$tmp"
@@ -149,6 +149,7 @@ cmd_join() {
     done
 
     [[ -z "$name" ]] && { echo "Error: --name required" >&2; exit 1; }
+    [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Error: name must be alphanumeric (with - and _)" >&2; exit 1; }
     [[ -z "$hub_spec" ]] && { echo "Error: --hub required" >&2; exit 1; }
 
     local hub_host="" hub_path="" hub_local="true"
