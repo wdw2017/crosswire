@@ -1,0 +1,731 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_FILE="$ROOT_DIR/comms.json"
+LIB_DIR="$ROOT_DIR/lib"
+
+source "$LIB_DIR/transport.sh"
+
+# --- JSON helpers ---
+
+json_get() {
+    local file="$1" key="$2"
+    if command -v jq &>/dev/null; then
+        jq -r "$key" "$file"
+    elif command -v python3 &>/dev/null; then
+        local pykey="${key% // empty}"
+        pykey="${pykey#.}"
+        python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+keys=sys.argv[2].split('.')
+v=d
+for k in keys:
+    if isinstance(v,dict): v=v.get(k)
+    else: v=None
+print('' if v is None else v)
+" "$file" "$pykey"
+    else
+        echo "Error: jq or python3 required for JSON parsing" >&2
+        exit 1
+    fi
+}
+
+json_set() {
+    local file="$1" key="$2" value="$3"
+    if command -v jq &>/dev/null; then
+        local tmp="${file}.tmp.$$"
+        if jq "$key = $value" "$file" > "$tmp"; then
+            mv "$tmp" "$file"
+        else
+            rm -f "$tmp"
+            return 1
+        fi
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json,sys
+with open(sys.argv[1]) as f: d=json.load(f)
+keys=sys.argv[2].lstrip('.').split('.')
+v=json.loads(sys.argv[3])
+obj=d
+for k in keys[:-1]:
+    obj=obj.setdefault(k,{})
+obj[keys[-1]]=v
+with open(sys.argv[1],'w') as f: json.dump(d,f,indent=2); f.write('\n')
+" "$file" "$key" "$value"
+    else
+        echo "Error: jq or python3 required for JSON parsing" >&2
+        exit 1
+    fi
+}
+
+# --- Config loading ---
+
+load_config() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "Error: $CONFIG_FILE not found. Run: comms join" >&2
+        exit 1
+    fi
+    SELF_NAME="$(json_get "$CONFIG_FILE" '.self')"
+    HUB_PATH="$(json_get "$CONFIG_FILE" '.hub.path')"
+    HUB_HOST="$(json_get "$CONFIG_FILE" '.hub.host // empty')"
+    HUB_LOCAL="$(json_get "$CONFIG_FILE" '.hub.local')"
+    DEFAULT_PEER="$(json_get "$CONFIG_FILE" '.defaultPeer // empty')"
+}
+
+get_peers() {
+    if command -v jq &>/dev/null; then
+        jq -r '.peers[]' "$CONFIG_FILE" 2>/dev/null
+    else
+        python3 -c "import json,sys; [print(p) for p in json.load(open(sys.argv[1])).get('peers',[])]" "$CONFIG_FILE" 2>/dev/null
+    fi
+}
+
+# --- Message helpers ---
+
+gen_msg_id() {
+    local ts rand
+    ts="$(date -u +%Y%m%d-%H%M%S)"
+    rand="$(openssl rand -hex 4)"
+    echo "${ts}-${rand}"
+}
+
+short_id() {
+    echo "${1##*-}"
+}
+
+msg_header_field() {
+    local file="$1" field="$2"
+    hub_read "$file" | sed -n "s/^${field}: *//p" | head -1
+}
+
+msg_body() {
+    hub_read "$1" | sed '1,/^$/d'
+}
+
+# --- Subcommands ---
+
+cmd_init_hub() {
+    local hub_path="" remote=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --path) hub_path="$2"; shift 2 ;;
+            --remote) remote="$2"; shift 2 ;;
+            *) echo "Error: unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+
+    if [[ -n "$remote" ]]; then
+        local host="${remote%%:*}"
+        local rpath="${remote#*:}"
+        [[ -z "$rpath" ]] && rpath=".comms"
+        rpath="${rpath%/}/.comms"
+        echo "Creating hub on $host at $rpath..."
+        ssh -o ConnectTimeout=5 -o BatchMode=yes "$host" \
+            "mkdir -p '$rpath'/{registry,tmp,files}" 2>/dev/null || {
+            echo "Error: cannot reach hub at $host. Check SSH config" >&2
+            exit 1
+        }
+        echo "Hub created at $host:$rpath"
+    else
+        hub_path="${hub_path:-.}"
+        hub_path="${hub_path%/}/.comms"
+        echo "Creating hub at $hub_path..."
+        mkdir -p "$hub_path"/{registry,tmp,files}
+        echo "Hub created at $hub_path"
+    fi
+}
+
+cmd_join() {
+    local name="" hub_spec=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --hub) hub_spec="$2"; shift 2 ;;
+            *) echo "Error: unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+
+    [[ -z "$name" ]] && { echo "Error: --name required" >&2; exit 1; }
+    [[ -z "$hub_spec" ]] && { echo "Error: --hub required" >&2; exit 1; }
+
+    local hub_host="" hub_path="" hub_local="true"
+    if [[ "$hub_spec" == *:* ]]; then
+        hub_host="${hub_spec%%:*}"
+        hub_path="${hub_spec#*:}"
+        hub_local="false"
+    else
+        hub_path="$hub_spec"
+    fi
+
+    # Set globals for transport layer
+    HUB_PATH="$hub_path"
+    HUB_HOST="$hub_host"
+    HUB_LOCAL="$hub_local"
+
+    # Check if already registered
+    local existing
+    existing="$(hub_ls "registry" | grep "^${name}.json$" || true)"
+    if [[ -n "$existing" ]]; then
+        echo "Error: '$name' already registered. Use a different name" >&2
+        exit 1
+    fi
+
+    # Register in hub
+    local now
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local reg_json
+    if [[ "$hub_local" == "true" ]]; then
+        reg_json="{\"name\":\"$name\",\"registered\":\"$now\",\"hubLocal\":true}"
+    else
+        reg_json="{\"name\":\"$name\",\"registered\":\"$now\",\"hubLocal\":false,\"hubAccess\":\"ssh://$hub_host:$hub_path\"}"
+    fi
+    echo "$reg_json" | hub_write "registry/${name}.json"
+
+    # Create inbox
+    hub_run "mkdir -p '$HUB_PATH/to-${name}/pending' '$HUB_PATH/to-${name}/done'"
+
+    # Pull peers
+    local peers=()
+    local reg_files
+    reg_files="$(hub_ls "registry")"
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local peer="${f%.json}"
+        [[ "$peer" != "$name" ]] && peers+=("$peer")
+    done <<< "$reg_files"
+
+    # Determine default peer
+    local default_peer="null"
+    if [[ ${#peers[@]} -eq 1 ]]; then
+        default_peer="\"${peers[0]}\""
+    fi
+
+    # Build peers JSON array
+    local peers_json="[]"
+    if [[ ${#peers[@]} -gt 0 ]]; then
+        if command -v jq &>/dev/null; then
+            peers_json="$(printf '%s\n' "${peers[@]}" | jq -R . | jq -s .)"
+        else
+            peers_json="$(python3 -c "import json,sys; print(json.dumps(sys.argv[1:]))" "${peers[@]}")"
+        fi
+    fi
+
+    # Write comms.json
+    local hub_host_json="null"
+    [[ -n "$hub_host" ]] && hub_host_json="\"$hub_host\""
+
+    cat > "$CONFIG_FILE" <<ENDJSON
+{
+  "self": "$name",
+  "hub": {
+    "path": "$hub_path",
+    "host": $hub_host_json,
+    "local": $hub_local
+  },
+  "peers": $peers_json,
+  "defaultPeer": $default_peer
+}
+ENDJSON
+
+    echo "Joined as '$name'. Peers: ${peers[*]:-none}"
+}
+
+cmd_sync() {
+    load_config
+
+    local reg_files peers=()
+    reg_files="$(hub_ls "registry")"
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local peer="${f%.json}"
+        [[ "$peer" != "$SELF_NAME" ]] && peers+=("$peer")
+    done <<< "$reg_files"
+
+    # Update peers in config
+    local peers_json="[]"
+    if [[ ${#peers[@]} -gt 0 ]]; then
+        if command -v jq &>/dev/null; then
+            peers_json="$(printf '%s\n' "${peers[@]}" | jq -R . | jq -s .)"
+        else
+            peers_json="$(python3 -c "import json,sys; print(json.dumps(sys.argv[1:]))" "${peers[@]}")"
+        fi
+    fi
+
+    json_set "$CONFIG_FILE" ".peers" "$peers_json"
+
+    # Update defaultPeer if single peer
+    if [[ ${#peers[@]} -eq 1 ]]; then
+        json_set "$CONFIG_FILE" ".defaultPeer" "\"${peers[0]}\""
+    fi
+
+    echo "Synced. Peers: ${peers[*]:-none}"
+}
+
+cmd_check() {
+    load_config
+
+    local inbox="to-${SELF_NAME}/pending"
+    local files
+    files="$(hub_ls "$inbox")"
+
+    if [[ -z "$files" ]]; then
+        echo "No pending messages"
+        return
+    fi
+
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local msgpath="${inbox}/${f}"
+        local content
+        content="$(hub_read "$msgpath")" || continue
+
+        local msg_id msg_from msg_type first_line
+        msg_id="$(echo "$content" | sed -n 's/^id: *//p' | head -1)"
+        msg_from="$(echo "$content" | sed -n 's/^from: *//p' | head -1)"
+        msg_type="$(echo "$content" | sed -n 's/^type: *//p' | head -1)"
+        first_line="$(echo "$content" | sed '1,/^$/d' | head -1)"
+
+        printf "%s\t%-8s\t%-10s\t%s\n" "$(short_id "$msg_id")" "$msg_type" "$msg_from" "$first_line"
+    done <<< "$files"
+}
+
+cmd_read() {
+    load_config
+    local id="$1"
+
+    # Try full ID first, then short ID match
+    local inbox="to-${SELF_NAME}/pending"
+    local target=""
+
+    if hub_read "${inbox}/${id}.msg" &>/dev/null; then
+        target="${inbox}/${id}.msg"
+    else
+        # Short ID search
+        local files
+        files="$(hub_ls "$inbox")"
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            if [[ "$f" == *"${id}"* ]]; then
+                target="${inbox}/${f}"
+                break
+            fi
+        done <<< "$files"
+    fi
+
+    if [[ -z "$target" ]]; then
+        echo "Error: message not found" >&2
+        exit 1
+    fi
+
+    hub_read "$target"
+}
+
+cmd_send() {
+    load_config
+    local to="" msg_type="" re="" body=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to) to="$2"; shift 2 ;;
+            --re) re="$2"; shift 2 ;;
+            -*)   echo "Error: unknown option: $1" >&2; exit 1 ;;
+            *)
+                if [[ -z "$msg_type" ]]; then
+                    msg_type="$1"; shift
+                else
+                    body="$*"; break
+                fi
+                ;;
+        esac
+    done
+
+    [[ -z "$msg_type" ]] && { echo "Error: message type required (task|question|reply|info)" >&2; exit 1; }
+    case "$msg_type" in
+        task|question|reply|info) ;;
+        *) echo "Error: invalid type '$msg_type'. Use: task, question, reply, info" >&2; exit 1 ;;
+    esac
+    [[ -z "$body" ]] && { echo "Error: message body required" >&2; exit 1; }
+
+    # Resolve recipient
+    if [[ -z "$to" ]]; then
+        local peers
+        local IFS=$'\n'
+        peers=($(get_peers))
+        unset IFS
+        if [[ ${#peers[@]} -eq 0 ]]; then
+            echo "Error: no peers. Run: comms sync" >&2
+            exit 1
+        elif [[ ${#peers[@]} -eq 1 ]]; then
+            to="${peers[0]}"
+        elif [[ -n "$DEFAULT_PEER" ]]; then
+            to="$DEFAULT_PEER"
+        else
+            local peer_list
+            peer_list="$(IFS=', '; echo "${peers[*]}")"
+            echo "Error: multiple peers. Use --to <name>. Peers: $peer_list" >&2
+            exit 1
+        fi
+    fi
+
+    # Validate peer exists
+    local found=false
+    while IFS= read -r p; do
+        [[ "$p" == "$to" ]] && { found=true; break; }
+    done < <(get_peers)
+    if [[ "$found" != "true" ]]; then
+        echo "Error: peer '$to' not found. Run: comms sync" >&2
+        exit 1
+    fi
+
+    local msg_id
+    msg_id="$(gen_msg_id)"
+
+    # Compose message
+    local msg
+    msg="$(cat <<EOF
+id: ${msg_id}
+from: ${SELF_NAME}
+to: ${to}
+type: ${msg_type}
+re: ${re}
+
+${body}
+EOF
+)"
+
+    # Atomic write: tmp/ then mv to recipient inbox
+    echo "$msg" | hub_write "tmp/${msg_id}.msg"
+    hub_mv "tmp/${msg_id}.msg" "to-${to}/pending/${msg_id}.msg"
+
+    # Also store in our outbox for tracking
+    hub_run "mkdir -p '$HUB_PATH/to-${SELF_NAME}/sent'"
+    echo "$msg" | hub_write "to-${SELF_NAME}/sent/${msg_id}.msg"
+
+    echo "Sent ${msg_type} to ${to} [$(short_id "$msg_id")]"
+}
+
+cmd_done() {
+    load_config
+    local id="$1"
+
+    local inbox="to-${SELF_NAME}/pending"
+    local done_dir="to-${SELF_NAME}/done"
+    local target=""
+    local filename=""
+
+    if hub_ls "$inbox" 2>/dev/null | grep -q "^${id}.msg$"; then
+        target="${inbox}/${id}.msg"
+        filename="${id}.msg"
+    else
+        local files
+        files="$(hub_ls "$inbox")"
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            if [[ "$f" == *"${id}"* ]]; then
+                target="${inbox}/${f}"
+                filename="$f"
+                break
+            fi
+        done <<< "$files"
+    fi
+
+    if [[ -z "$target" ]]; then
+        echo "Error: message not found" >&2
+        exit 1
+    fi
+
+    hub_mv "$target" "${done_dir}/${filename}"
+    echo "Done: ${filename%.msg}"
+}
+
+cmd_done_out() {
+    load_config
+    local id="$1"
+
+    local sent_dir="to-${SELF_NAME}/sent"
+    local done_dir="to-${SELF_NAME}/sent-done"
+    hub_run "mkdir -p '$HUB_PATH/$done_dir'"
+
+    local target="" filename=""
+    if hub_ls "$sent_dir" 2>/dev/null | grep -q "^${id}.msg$"; then
+        target="${sent_dir}/${id}.msg"
+        filename="${id}.msg"
+    else
+        local files
+        files="$(hub_ls "$sent_dir")"
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            if [[ "$f" == *"${id}"* ]]; then
+                target="${sent_dir}/${f}"
+                filename="$f"
+                break
+            fi
+        done <<< "$files"
+    fi
+
+    if [[ -z "$target" ]]; then
+        echo "Error: sent message not found" >&2
+        exit 1
+    fi
+
+    hub_mv "$target" "${done_dir}/${filename}"
+    echo "Archived: ${filename%.msg}"
+}
+
+cmd_peers() {
+    load_config
+
+    local IFS=$'\n'
+    local peers=($(get_peers))
+    unset IFS
+    if [[ ${#peers[@]} -eq 0 ]]; then
+        echo "No peers registered"
+        return
+    fi
+
+    for peer in "${peers[@]}"; do
+        local count=0
+        local files
+        files="$(hub_ls "to-${peer}/pending" 2>/dev/null || true)"
+        if [[ -n "$files" ]]; then
+            count="$(echo "$files" | wc -l | tr -d ' ')"
+        fi
+        printf "%-15s %s pending\n" "$peer" "$count"
+    done
+}
+
+cmd_who() {
+    load_config
+    echo "Identity: $SELF_NAME"
+    if [[ "$HUB_LOCAL" == "true" ]]; then
+        echo "Hub: $HUB_PATH (local)"
+    else
+        echo "Hub: $HUB_HOST:$HUB_PATH (remote)"
+    fi
+    local IFS=$'\n'
+    local peers=($(get_peers))
+    unset IFS
+    echo "Peers: ${peers[*]:-none}"
+    [[ -n "$DEFAULT_PEER" ]] && echo "Default peer: $DEFAULT_PEER"
+}
+
+cmd_gc() {
+    load_config
+    local days=7
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --days) days="$2"; shift 2
+                    [[ "$days" =~ ^[0-9]+$ ]] || { echo "Error: --days must be a number" >&2; exit 1; } ;;
+            *) echo "Error: unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+
+    local done_dir="to-${SELF_NAME}/done"
+    hub_run "find '$HUB_PATH/$done_dir' -name '*.msg' -mtime +${days} -delete 2>/dev/null" || true
+
+    local sent_done_dir="to-${SELF_NAME}/sent-done"
+    hub_run "find '$HUB_PATH/$sent_done_dir' -name '*.msg' -mtime +${days} -delete 2>/dev/null" || true
+
+    echo "Cleaned messages older than ${days} days"
+}
+
+cmd_attach() {
+    load_config
+    local id="${1:-}" file="${2:-}"
+    [[ -z "$id" || -z "$file" ]] && { echo "Usage: comms attach <id> <file>" >&2; exit 1; }
+    [[ "$id" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Error: invalid message ID" >&2; exit 1; }
+    [[ ! -f "$file" ]] && { echo "Error: file not found: $file" >&2; exit 1; }
+
+    hub_run "mkdir -p '$HUB_PATH/files/${id}'"
+
+    local basename
+    basename="$(basename "$file")"
+    if [[ "$HUB_LOCAL" == "true" ]]; then
+        cp "$file" "$HUB_PATH/files/${id}/${basename}"
+    else
+        scp -o ConnectTimeout=5 -o BatchMode=yes "$file" "${HUB_HOST}:${HUB_PATH}/files/${id}/${basename}" 2>/dev/null || {
+            echo "Error: cannot reach hub at $HUB_HOST. Check SSH config" >&2
+            exit 1
+        }
+    fi
+    echo "Attached: ${basename} -> files/${id}/"
+}
+
+cmd_ls_done() {
+    load_config
+
+    local done_dir="to-${SELF_NAME}/done"
+    local files
+    files="$(hub_ls "$done_dir")"
+
+    if [[ -z "$files" ]]; then
+        echo "No processed messages"
+        return
+    fi
+
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local msgpath="${done_dir}/${f}"
+        local content
+        content="$(hub_read "$msgpath")" || continue
+
+        local msg_id msg_from msg_type first_line
+        msg_id="$(echo "$content" | sed -n 's/^id: *//p' | head -1)"
+        msg_from="$(echo "$content" | sed -n 's/^from: *//p' | head -1)"
+        msg_type="$(echo "$content" | sed -n 's/^type: *//p' | head -1)"
+        first_line="$(echo "$content" | sed '1,/^$/d' | head -1)"
+
+        printf "%s\t%-8s\t%-10s\t%s\n" "$(short_id "$msg_id")" "$msg_type" "$msg_from" "$first_line"
+    done <<< "$files"
+}
+
+cmd_read_done() {
+    load_config
+    local id="$1"
+
+    local done_dir="to-${SELF_NAME}/done"
+    local target=""
+
+    if hub_read "${done_dir}/${id}.msg" &>/dev/null; then
+        target="${done_dir}/${id}.msg"
+    else
+        local files
+        files="$(hub_ls "$done_dir")"
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            if [[ "$f" == *"${id}"* ]]; then
+                target="${done_dir}/${f}"
+                break
+            fi
+        done <<< "$files"
+    fi
+
+    if [[ -z "$target" ]]; then
+        echo "Error: message not found" >&2
+        exit 1
+    fi
+
+    hub_read "$target"
+}
+
+cmd_test() {
+    load_config
+    local to=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to) to="$2"; shift 2 ;;
+            *) echo "Error: unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+
+    # Build send args
+    local send_args=()
+    [[ -n "$to" ]] && send_args+=(--to "$to")
+    send_args+=(info "ping from ${SELF_NAME} at $(date -u +%Y-%m-%dT%H:%M:%SZ)")
+
+    cmd_send "${send_args[@]}"
+
+    # Verify delivery
+    local target="${to}"
+    if [[ -z "$target" ]]; then
+        local IFS=$'\n'
+        local peers=($(get_peers))
+        unset IFS
+        if [[ ${#peers[@]} -eq 1 ]]; then
+            target="${peers[0]}"
+        elif [[ -n "$DEFAULT_PEER" ]]; then
+            target="$DEFAULT_PEER"
+        fi
+    fi
+
+    if [[ -n "$target" ]]; then
+        local count
+        count="$(hub_ls "to-${target}/pending" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "Delivery verified: ${count} message(s) in ${target}'s inbox"
+    fi
+}
+
+cmd_help() {
+    cat <<'HELP'
+comms — cross-instance communication CLI
+
+Usage: comms <command> [options]
+
+Commands:
+  init-hub [--path <dir>] [--remote user@host:<dir>]
+      Create hub directory structure
+
+  join --name <name> --hub <path|user@host:path>
+      Register this instance with a hub
+
+  sync
+      Refresh peer list from hub registry
+
+  check
+      List pending inbox messages
+
+  read <id>
+      Print full message (accepts short or full ID)
+
+  send [--to <name>] <type> [--re <id>] <body>
+      Send a message. Types: task, question, reply, info
+      Omit --to with a single peer or defaultPeer set
+
+  done <id>
+      Mark a received message as processed
+
+  done-out <id>
+      Archive a sent message
+
+  peers
+      List registered peers with pending counts
+
+  who
+      Print identity and hub info
+
+  gc [--days <n>]
+      Remove processed messages older than n days (default: 7)
+
+  attach <id> <file>
+      Attach a file to a message
+
+  ls-done
+      List processed messages
+
+  read-done <id>
+      Read a processed message
+
+  test [--to <name>]
+      Send a test ping and verify delivery
+
+  help
+      Show this help
+HELP
+}
+
+# --- Main dispatch ---
+
+[[ $# -eq 0 ]] && { cmd_help; exit 0; }
+
+case "$1" in
+    init-hub)   shift; cmd_init_hub "$@" ;;
+    join)       shift; cmd_join "$@" ;;
+    sync)       shift; cmd_sync "$@" ;;
+    check)      shift; cmd_check "$@" ;;
+    read)       shift; [[ $# -eq 0 ]] && { echo "Error: message ID required" >&2; exit 1; }; cmd_read "$1" ;;
+    send)       shift; cmd_send "$@" ;;
+    done)       shift; [[ $# -eq 0 ]] && { echo "Error: message ID required" >&2; exit 1; }; cmd_done "$1" ;;
+    done-out)   shift; [[ $# -eq 0 ]] && { echo "Error: message ID required" >&2; exit 1; }; cmd_done_out "$1" ;;
+    peers)      shift; cmd_peers "$@" ;;
+    who)        shift; cmd_who "$@" ;;
+    gc)         shift; cmd_gc "$@" ;;
+    attach)     shift; [[ $# -lt 2 ]] && { echo "Error: usage: comms attach <id> <file>" >&2; exit 1; }; cmd_attach "$1" "$2" ;;
+    ls-done)    shift; cmd_ls_done "$@" ;;
+    read-done)  shift; [[ $# -eq 0 ]] && { echo "Error: message ID required" >&2; exit 1; }; cmd_read_done "$1" ;;
+    test)       shift; cmd_test "$@" ;;
+    help|--help|-h) cmd_help ;;
+    *)          echo "Error: unknown command: $1. Run: comms help" >&2; exit 1 ;;
+esac

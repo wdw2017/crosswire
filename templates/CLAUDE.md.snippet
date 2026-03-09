@@ -1,0 +1,13 @@
+<!-- claude-instance-comms:start -->
+## Inter-Instance Communication
+
+This project uses `claude-instance-comms` for cross-instance coordination.
+- Your identity and peers are in `comms.json`
+- Always use the `comms` CLI for all operations. Never construct raw commands.
+- Check inbox: `comms check` -- do this at session start
+- Read: `comms read <id>`
+- Send: `comms send [--to <name>] <type> [--re <id>] "body"`
+- Mark done: `comms done <id>`
+- List peers: `comms peers`
+- Sync peer list: `comms sync`
+<!-- claude-instance-comms:end -->

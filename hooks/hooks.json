@@ -1,0 +1,9 @@
+{
+  "hooks": [
+    {
+      "event": "Notification",
+      "type": "command",
+      "command": "comms check 2>/dev/null | head -5"
+    }
+  ]
+}

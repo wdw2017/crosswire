@@ -1,0 +1,10 @@
+{
+  "self": "{{INSTANCE_NAME}}",
+  "hub": {
+    "path": "{{HUB_PATH}}",
+    "host": "{{HUB_HOST}}",
+    "local": {{HUB_LOCAL}}
+  },
+  "peers": [],
+  "defaultPeer": null
+}
