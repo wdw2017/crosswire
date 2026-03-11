@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install-comms.sh — Standalone installer for claude-instance-comms
-# Usage: ./install-comms.sh [--mode hub|join] [--name NAME] [--hub PATH] [--agent claude|codex|other|skip] [--install-dir DIR]
+# install-xw.sh — Standalone installer for crosswire
+# Usage: ./install-xw.sh [--mode hub|join] [--name NAME] [--hub PATH] [--agent claude|codex|other|skip] [--install-dir DIR]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -98,9 +98,9 @@ while [[ $# -gt 0 ]]; do
         --install-dir) ARG_INSTALL_DIR="$2"; shift 2 ;;
         --help|-h)
             cat <<'USAGE'
-install-comms.sh — Installer for claude-instance-comms
+install-xw.sh — Installer for crosswire
 
-Usage: ./install-comms.sh [OPTIONS]
+Usage: ./install-xw.sh [OPTIONS]
 
 Options:
   --mode hub|join       Create a new hub or join an existing one
@@ -108,14 +108,14 @@ Options:
   --hub PATH            Hub directory path (for create) or location (for join)
   --hub-host USER@HOST  Remote hub host (e.g. user@server)
   --agent TYPE          Agent integration: claude, codex, other, skip
-  --install-dir DIR     Where to install the comms CLI (default: current dir)
+  --install-dir DIR     Where to install the xw CLI (default: current dir)
   --help                Show this help
 
 Without flags, runs interactively with sensible defaults.
 USAGE
             exit 0
             ;;
-        *) fatal "Unknown option: $1. Run: ./install-comms.sh --help" ;;
+        *) fatal "Unknown option: $1. Run: ./install-xw.sh --help" ;;
     esac
 done
 
@@ -158,9 +158,9 @@ elif [[ -f "$HOME/.ssh/id_rsa" ]]; then
 else
     warn "No SSH key found (~/.ssh/id_ed25519 or ~/.ssh/id_rsa)"
     if $HAS_SSH; then
-        if confirm "Generate an ed25519 SSH key for comms?"; then
+        if confirm "Generate an ed25519 SSH key for crosswire?"; then
             info "Generating SSH key..."
-            ssh-keygen -t ed25519 -C "claude-instance-comms" -f "$HOME/.ssh/id_ed25519" -N ""
+            ssh-keygen -t ed25519 -C "crosswire" -f "$HOME/.ssh/id_ed25519" -N ""
             SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
             success "SSH key generated: $SSH_KEY_PATH"
         else
@@ -178,7 +178,7 @@ case "$(uname -s)" in
 esac
 
 # Verify repo files exist
-for f in bin/comms lib/transport.sh templates/comms.json.template templates/CLAUDE.md.snippet templates/AGENTS.md.snippet; do
+for f in bin/xw lib/transport.sh templates/xw.json.template templates/CLAUDE.md.snippet templates/AGENTS.md.snippet; do
     [[ -f "$SCRIPT_DIR/$f" ]] || fatal "Required file not found: $SCRIPT_DIR/$f\nAre you running this from the cloned repo directory?"
 done
 success "Repo files verified"
@@ -220,7 +220,7 @@ if [[ "$MODE" == "hub" ]]; then
     if [[ -n "$ARG_HUB" ]]; then
         HUB_PATH="$ARG_HUB"
     else
-        ask HUB_PATH "Hub directory path" "./.comms"
+        ask HUB_PATH "Hub directory path" "./.crosswire"
     fi
 
     # Local or remote?
@@ -303,12 +303,12 @@ if [[ "$MODE" == "hub" ]]; then
         if [[ -n "$local_check" ]]; then
             warn "Instance '$INSTANCE_NAME' already registered in hub"
         else
-            ssh -o ConnectTimeout=5 -o BatchMode=yes "$HUB_HOST" \
-                "echo '$REG_JSON' > '$HUB_PATH/registry/${INSTANCE_NAME}.json'"
+            printf '%s' "$REG_JSON" | ssh -o ConnectTimeout=5 -o BatchMode=yes "$HUB_HOST" \
+                "cat > '${HUB_PATH}/registry/${INSTANCE_NAME}.json'"
             success "Registered '$INSTANCE_NAME' in hub"
         fi
         ssh -o ConnectTimeout=5 -o BatchMode=yes "$HUB_HOST" \
-            "mkdir -p '$HUB_PATH/to-${INSTANCE_NAME}'/{pending,done,sent}"
+            "mkdir -p '${HUB_PATH}/to-${INSTANCE_NAME}'/{pending,done,sent}"
     fi
 
 fi
@@ -405,11 +405,11 @@ if [[ "$MODE" == "join" ]]; then
         mkdir -p "$HUB_PATH/to-${INSTANCE_NAME}"/{pending,done,sent}
     else
         REG_JSON="{\"name\":\"$INSTANCE_NAME\",\"registered\":\"$NOW\",\"hubLocal\":false,\"hubAccess\":\"ssh://$HUB_HOST:$HUB_PATH\"}"
-        ssh -o ConnectTimeout=5 -o BatchMode=yes "$HUB_HOST" \
-            "echo '$REG_JSON' > '$HUB_PATH/registry/${INSTANCE_NAME}.json'" 2>/dev/null || \
+        printf '%s' "$REG_JSON" | ssh -o ConnectTimeout=5 -o BatchMode=yes "$HUB_HOST" \
+            "cat > '${HUB_PATH}/registry/${INSTANCE_NAME}.json'" 2>/dev/null || \
             fatal "Failed to register in hub"
         ssh -o ConnectTimeout=5 -o BatchMode=yes "$HUB_HOST" \
-            "mkdir -p '$HUB_PATH/to-${INSTANCE_NAME}'/{pending,done,sent}" 2>/dev/null || \
+            "mkdir -p '${HUB_PATH}/to-${INSTANCE_NAME}'/{pending,done,sent}" 2>/dev/null || \
             fatal "Failed to create inbox dirs"
     fi
 
@@ -428,7 +428,7 @@ INSTALL_DIR=""
 if [[ -n "$ARG_INSTALL_DIR" ]]; then
     INSTALL_DIR="$ARG_INSTALL_DIR"
 else
-    ask INSTALL_DIR "Install location (directory for comms CLI + config)" "$(pwd)"
+    ask INSTALL_DIR "Install location (directory for xw CLI + config)" "$(pwd)"
 fi
 
 # Resolve to absolute path
@@ -443,22 +443,22 @@ mkdir -p "$INSTALL_DIR/lib"
 
 # Copy CLI (skip if installing into the repo itself)
 if [[ "$(cd "$INSTALL_DIR" && pwd)" == "$(cd "$SCRIPT_DIR" && pwd)" ]]; then
-    success "Installing into repo directory — bin/comms and lib/transport.sh already in place"
-    chmod +x "$INSTALL_DIR/bin/comms"
+    success "Installing into repo directory — bin/xw and lib/transport.sh already in place"
+    chmod +x "$INSTALL_DIR/bin/xw"
 else
-    if [[ -f "$INSTALL_DIR/bin/comms" ]]; then
-        warn "bin/comms already exists at $INSTALL_DIR/bin/"
+    if [[ -f "$INSTALL_DIR/bin/xw" ]]; then
+        warn "bin/xw already exists at $INSTALL_DIR/bin/"
         if confirm "Overwrite with latest version?"; then
-            cp "$SCRIPT_DIR/bin/comms" "$INSTALL_DIR/bin/comms"
-            success "Updated bin/comms"
+            cp "$SCRIPT_DIR/bin/xw" "$INSTALL_DIR/bin/xw"
+            success "Updated bin/xw"
         else
-            info "Keeping existing bin/comms"
+            info "Keeping existing bin/xw"
         fi
     else
-        cp "$SCRIPT_DIR/bin/comms" "$INSTALL_DIR/bin/comms"
-        success "Installed bin/comms"
+        cp "$SCRIPT_DIR/bin/xw" "$INSTALL_DIR/bin/xw"
+        success "Installed bin/xw"
     fi
-    chmod +x "$INSTALL_DIR/bin/comms"
+    chmod +x "$INSTALL_DIR/bin/xw"
 
     # Copy transport lib
     if [[ -f "$INSTALL_DIR/lib/transport.sh" ]]; then
@@ -471,8 +471,8 @@ else
     fi
 fi
 
-# Generate comms.json
-CONFIG_FILE="$INSTALL_DIR/comms.json"
+# Generate xw.json
+CONFIG_FILE="$INSTALL_DIR/xw.json"
 
 # Build peers JSON
 PEERS_JSON="[]"
@@ -495,7 +495,7 @@ HUB_HOST_JSON="null"
 [[ -n "$HUB_HOST" ]] && HUB_HOST_JSON="\"$HUB_HOST\""
 
 if [[ -f "$CONFIG_FILE" ]]; then
-    warn "comms.json already exists at $CONFIG_FILE"
+    warn "xw.json already exists at $CONFIG_FILE"
     if confirm "Overwrite with new configuration?"; then
         cat > "$CONFIG_FILE" <<ENDJSON
 {
@@ -509,9 +509,9 @@ if [[ -f "$CONFIG_FILE" ]]; then
   "defaultPeer": $DEFAULT_PEER
 }
 ENDJSON
-        success "Updated comms.json"
+        success "Updated xw.json"
     else
-        info "Keeping existing comms.json"
+        info "Keeping existing xw.json"
     fi
 else
     cat > "$CONFIG_FILE" <<ENDJSON
@@ -526,20 +526,20 @@ else
   "defaultPeer": $DEFAULT_PEER
 }
 ENDJSON
-    success "Generated comms.json"
+    success "Generated xw.json"
 fi
 
-# Create a convenience wrapper 'comms' at the install root
-if [[ -f "$INSTALL_DIR/comms" ]]; then
-    info "Convenience wrapper already exists at $INSTALL_DIR/comms"
+# Create a convenience wrapper 'xw' at the install root
+if [[ -f "$INSTALL_DIR/xw" ]]; then
+    info "Convenience wrapper already exists at $INSTALL_DIR/xw"
 else
-    cat > "$INSTALL_DIR/comms" <<'WRAPPER'
+    cat > "$INSTALL_DIR/xw" <<'WRAPPER'
 #!/usr/bin/env bash
-# Convenience wrapper — delegates to bin/comms
-exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/comms" "$@"
+# Convenience wrapper — delegates to bin/xw
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/xw" "$@"
 WRAPPER
-    chmod +x "$INSTALL_DIR/comms"
-    success "Created convenience wrapper: $INSTALL_DIR/comms"
+    chmod +x "$INSTALL_DIR/xw"
+    success "Created convenience wrapper: $INSTALL_DIR/xw"
 fi
 
 # ============================================================
@@ -548,8 +548,8 @@ fi
 
 header "Step 5: Agent integration"
 
-MARKER_START="<!-- claude-instance-comms:start -->"
-MARKER_END="<!-- claude-instance-comms:end -->"
+MARKER_START="<!-- crosswire:start -->"
+MARKER_END="<!-- crosswire:end -->"
 
 # Inject a snippet into a file between markers (idempotent)
 inject_snippet() {
@@ -564,10 +564,10 @@ inject_snippet() {
 
     # Check if markers already exist
     if grep -qF "$MARKER_START" "$target_file" 2>/dev/null; then
-        warn "Comms snippet already present in $target_file"
+        warn "Crosswire snippet already present in $target_file"
         if confirm "Replace existing snippet?"; then
             # Remove old snippet (between markers inclusive) and inject new
-            local tmp_file="${target_file}.comms-tmp.$$"
+            local tmp_file="${target_file}.xw-tmp.$$"
             awk -v start="$MARKER_START" -v end="$MARKER_END" '
                 $0 == start { skip=1; next }
                 $0 == end   { skip=0; next }
@@ -589,7 +589,7 @@ inject_snippet() {
     echo "" >> "$target_file"
     cat "$snippet_file" >> "$target_file"
     echo "" >> "$target_file"
-    success "Injected comms snippet into $target_file"
+    success "Injected crosswire snippet into $target_file"
 }
 
 AGENT_CHOICE=""
@@ -622,15 +622,15 @@ case "$AGENT_CHOICE" in
         # Copy slash command
         COMMANDS_DIR="$INSTALL_DIR/.claude/commands"
         mkdir -p "$COMMANDS_DIR"
-        if [[ -f "$COMMANDS_DIR/comms.md" ]]; then
-            warn "Slash command already exists at $COMMANDS_DIR/comms.md"
+        if [[ -f "$COMMANDS_DIR/xw.md" ]]; then
+            warn "Slash command already exists at $COMMANDS_DIR/xw.md"
             if confirm "Update slash command?"; then
-                cp "$SCRIPT_DIR/commands/comms.md" "$COMMANDS_DIR/comms.md"
-                success "Updated /comms slash command"
+                cp "$SCRIPT_DIR/commands/xw.md" "$COMMANDS_DIR/xw.md"
+                success "Updated /xw slash command"
             fi
         else
-            cp "$SCRIPT_DIR/commands/comms.md" "$COMMANDS_DIR/comms.md"
-            success "Installed /comms slash command"
+            cp "$SCRIPT_DIR/commands/xw.md" "$COMMANDS_DIR/xw.md"
+            success "Installed /xw slash command"
         fi
 
         # Install hooks if hooks dir exists or user confirms
@@ -681,31 +681,31 @@ esac
 
 header "Step 6: Verify installation"
 
-COMMS_CLI="$INSTALL_DIR/bin/comms"
+CX_CLI="$INSTALL_DIR/bin/xw"
 
-# Run comms who
-info "Running: comms who"
-if "$COMMS_CLI" who 2>/dev/null; then
+# Run xw who
+info "Running: xw who"
+if "$CX_CLI" who 2>/dev/null; then
     success "Identity verified"
 else
-    warn "comms who failed — check comms.json configuration"
+    warn "xw who failed — check xw.json configuration"
 fi
 
 echo ""
 
-# Run comms peers
-info "Running: comms peers"
-if "$COMMS_CLI" peers 2>/dev/null; then
+# Run xw peers
+info "Running: xw peers"
+if "$CX_CLI" peers 2>/dev/null; then
     success "Peer listing works"
 else
-    warn "comms peers failed — this is normal if you're the first instance"
+    warn "xw peers failed — this is normal if you're the first instance"
 fi
 
 # Offer test if peers exist
 if [[ ${#PEERS[@]} -gt 0 ]]; then
     echo ""
     if confirm "Send a test message to verify connectivity?"; then
-        "$COMMS_CLI" test 2>/dev/null && success "Test message sent" || warn "Test failed"
+        "$CX_CLI" test 2>/dev/null && success "Test message sent" || warn "Test failed"
     fi
 fi
 
@@ -719,15 +719,15 @@ echo ""
 printf "  ${BOLD}Instance:${RESET}    %s\n" "$INSTANCE_NAME"
 printf "  ${BOLD}Hub:${RESET}         %s\n" "$(if [[ "$HUB_LOCAL" == "true" ]]; then echo "$HUB_PATH (local)"; else echo "$HUB_HOST:$HUB_PATH (remote)"; fi)"
 printf "  ${BOLD}Peers:${RESET}       %s\n" "$(if [[ ${#PEERS[@]} -gt 0 ]]; then echo "${PEERS[*]}"; else echo "none yet"; fi)"
-printf "  ${BOLD}CLI:${RESET}         %s\n" "$INSTALL_DIR/comms"
+printf "  ${BOLD}CLI:${RESET}         %s\n" "$INSTALL_DIR/xw"
 printf "  ${BOLD}Config:${RESET}      %s\n" "$CONFIG_FILE"
 
 echo ""
 printf "${DIM}Quick start:${RESET}\n"
-echo "  ./comms check       # Check inbox"
-echo "  ./comms peers       # List peers"
-echo "  ./comms who         # Show identity"
-echo "  ./comms send info \"Hello from $INSTANCE_NAME\"   # Send a message"
+echo "  ./xw check       # Check inbox"
+echo "  ./xw peers       # List peers"
+echo "  ./xw who         # Show identity"
+echo "  ./xw send info \"Hello from $INSTANCE_NAME\"   # Send a message"
 echo ""
-printf "${DIM}To connect another instance, run install-comms.sh there and choose 'Join'.${RESET}\n"
+printf "${DIM}To connect another instance, run install-xw.sh there and choose 'Join'.${RESET}\n"
 echo ""

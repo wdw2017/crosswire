@@ -1,5 +1,5 @@
-# claude-instance-comms demo
-# Runs actual comms commands with real output
+# crosswire demo
+# Runs actual xw commands with real output
 # https://github.com/charmbracelet/vhs
 
 Output demo/demo.gif

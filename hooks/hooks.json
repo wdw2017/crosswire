@@ -3,7 +3,7 @@
     {
       "event": "Notification",
       "type": "command",
-      "command": "comms check 2>/dev/null | head -5"
+      "command": "xw check 2>/dev/null | head -5"
     }
   ]
 }

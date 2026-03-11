@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$ROOT_DIR/comms.json"
+CONFIG_FILE="$ROOT_DIR/xw.json"
 LIB_DIR="$ROOT_DIR/lib"
 
 source "$LIB_DIR/transport.sh"
@@ -65,7 +65,7 @@ with open(sys.argv[1],'w') as f: json.dump(d,f,indent=2); f.write('\n')
 
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Error: $CONFIG_FILE not found. Run: comms join" >&2
+        echo "Error: $CONFIG_FILE not found. Run: xw join" >&2
         exit 1
     fi
     SELF_NAME="$(json_get "$CONFIG_FILE" '.self')"
@@ -73,6 +73,12 @@ load_config() {
     HUB_HOST="$(json_get "$CONFIG_FILE" '.hub.host // empty')"
     HUB_LOCAL="$(json_get "$CONFIG_FILE" '.hub.local')"
     DEFAULT_PEER="$(json_get "$CONFIG_FILE" '.defaultPeer // empty')"
+
+    # Validate HUB_PATH: reject shell metacharacters to prevent injection
+    if [[ "$HUB_PATH" =~ [\'\"\$\`\;\&\|\>\<\(\)\{\}\!] ]]; then
+        echo "Error: hub.path contains unsafe characters: $HUB_PATH" >&2
+        exit 1
+    fi
 }
 
 get_peers() {
@@ -96,15 +102,6 @@ short_id() {
     echo "${1##*-}"
 }
 
-msg_header_field() {
-    local file="$1" field="$2"
-    hub_read "$file" | sed -n "s/^${field}: *//p" | head -1
-}
-
-msg_body() {
-    hub_read "$1" | sed '1,/^$/d'
-}
-
 # --- Subcommands ---
 
 cmd_init_hub() {
@@ -120,8 +117,8 @@ cmd_init_hub() {
     if [[ -n "$remote" ]]; then
         local host="${remote%%:*}"
         local rpath="${remote#*:}"
-        [[ -z "$rpath" ]] && rpath=".comms"
-        rpath="${rpath%/}/.comms"
+        [[ -z "$rpath" ]] && rpath=".crosswire"
+        rpath="${rpath%/}/.crosswire"
         echo "Creating hub on $host at $rpath..."
         ssh -o ConnectTimeout=5 -o BatchMode=yes "$host" \
             "mkdir -p '$rpath'/{registry,tmp,files}" 2>/dev/null || {
@@ -131,7 +128,7 @@ cmd_init_hub() {
         echo "Hub created at $host:$rpath"
     else
         hub_path="${hub_path:-.}"
-        hub_path="${hub_path%/}/.comms"
+        hub_path="${hub_path%/}/.crosswire"
         echo "Creating hub at $hub_path..."
         mkdir -p "$hub_path"/{registry,tmp,files}
         echo "Hub created at $hub_path"
@@ -186,7 +183,7 @@ cmd_join() {
     echo "$reg_json" | hub_write "registry/${name}.json"
 
     # Create inbox
-    hub_run "mkdir -p '$HUB_PATH/to-${name}/pending' '$HUB_PATH/to-${name}/done'"
+    hub_run "mkdir -p '$HUB_PATH/to-${name}/pending' '$HUB_PATH/to-${name}/done' '$HUB_PATH/to-${name}/sent'"
 
     # Pull peers
     local peers=()
@@ -214,7 +211,7 @@ cmd_join() {
         fi
     fi
 
-    # Write comms.json
+    # Write xw.json
     local hub_host_json="null"
     [[ -n "$hub_host" ]] && hub_host_json="\"$hub_host\""
 
@@ -257,9 +254,11 @@ cmd_sync() {
 
     json_set "$CONFIG_FILE" ".peers" "$peers_json"
 
-    # Update defaultPeer if single peer
+    # Update defaultPeer: set if single peer, clear if multiple
     if [[ ${#peers[@]} -eq 1 ]]; then
         json_set "$CONFIG_FILE" ".defaultPeer" "\"${peers[0]}\""
+    elif [[ ${#peers[@]} -gt 1 ]]; then
+        json_set "$CONFIG_FILE" ".defaultPeer" "null"
     fi
 
     echo "Synced. Peers: ${peers[*]:-none}"
@@ -332,7 +331,13 @@ cmd_send() {
         case "$1" in
             --to) to="$2"; shift 2 ;;
             --re) re="$2"; shift 2 ;;
-            -*)   echo "Error: unknown option: $1" >&2; exit 1 ;;
+            -*)
+                if [[ -n "$msg_type" ]]; then
+                    # After type is set, unknown flags are part of body
+                    body="$*"; break
+                fi
+                echo "Error: unknown option: $1" >&2; exit 1
+                ;;
             *)
                 if [[ -z "$msg_type" ]]; then
                     msg_type="$1"; shift
@@ -357,7 +362,7 @@ cmd_send() {
         peers=($(get_peers))
         unset IFS
         if [[ ${#peers[@]} -eq 0 ]]; then
-            echo "Error: no peers. Run: comms sync" >&2
+            echo "Error: no peers. Run: xw sync" >&2
             exit 1
         elif [[ ${#peers[@]} -eq 1 ]]; then
             to="${peers[0]}"
@@ -377,7 +382,7 @@ cmd_send() {
         [[ "$p" == "$to" ]] && { found=true; break; }
     done < <(get_peers)
     if [[ "$found" != "true" ]]; then
-        echo "Error: peer '$to' not found. Run: comms sync" >&2
+        echo "Error: peer '$to' not found. Run: xw sync" >&2
         exit 1
     fi
 
@@ -530,13 +535,16 @@ cmd_gc() {
     local sent_done_dir="to-${SELF_NAME}/sent-done"
     hub_run "find '$HUB_PATH/$sent_done_dir' -name '*.msg' -mtime +${days} -delete 2>/dev/null" || true
 
+    # Clean orphaned tmp files
+    hub_run "find '$HUB_PATH/tmp' -name '*.msg' -mtime +${days} -delete 2>/dev/null" || true
+
     echo "Cleaned messages older than ${days} days"
 }
 
 cmd_attach() {
     load_config
     local id="${1:-}" file="${2:-}"
-    [[ -z "$id" || -z "$file" ]] && { echo "Usage: comms attach <id> <file>" >&2; exit 1; }
+    [[ -z "$id" || -z "$file" ]] && { echo "Usage: xw attach <id> <file>" >&2; exit 1; }
     [[ "$id" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Error: invalid message ID" >&2; exit 1; }
     [[ ! -f "$file" ]] && { echo "Error: file not found: $file" >&2; exit 1; }
 
@@ -651,9 +659,9 @@ cmd_test() {
 
 cmd_help() {
     cat <<'HELP'
-comms — cross-instance communication CLI
+xw — crosswire cross-instance communication CLI
 
-Usage: comms <command> [options]
+Usage: xw <command> [options]
 
 Commands:
   init-hub [--path <dir>] [--remote user@host:<dir>]
@@ -723,10 +731,10 @@ case "$1" in
     peers)      shift; cmd_peers "$@" ;;
     who)        shift; cmd_who "$@" ;;
     gc)         shift; cmd_gc "$@" ;;
-    attach)     shift; [[ $# -lt 2 ]] && { echo "Error: usage: comms attach <id> <file>" >&2; exit 1; }; cmd_attach "$1" "$2" ;;
+    attach)     shift; [[ $# -lt 2 ]] && { echo "Error: usage: xw attach <id> <file>" >&2; exit 1; }; cmd_attach "$1" "$2" ;;
     ls-done)    shift; cmd_ls_done "$@" ;;
     read-done)  shift; [[ $# -eq 0 ]] && { echo "Error: message ID required" >&2; exit 1; }; cmd_read_done "$1" ;;
     test)       shift; cmd_test "$@" ;;
     help|--help|-h) cmd_help ;;
-    *)          echo "Error: unknown command: $1. Run: comms help" >&2; exit 1 ;;
+    *)          echo "Error: unknown command: $1. Run: xw help" >&2; exit 1 ;;
 esac

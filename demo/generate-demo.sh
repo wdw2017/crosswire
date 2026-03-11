@@ -11,25 +11,25 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 setup_node() {
     local dir="$1"
     mkdir -p "$dir/bin" "$dir/lib"
-    ln -sf "$REPO_DIR/bin/comms" "$dir/bin/comms"
+    ln -sf "$REPO_DIR/bin/xw" "$dir/bin/xw"
     ln -sf "$REPO_DIR/lib/transport.sh" "$dir/lib/transport.sh"
 }
 
 HUB_PARENT="$WORK_DIR/hub"
-HUB="$HUB_PARENT/.comms"
+HUB="$HUB_PARENT/.crosswire"
 STUDIO_DIR="$WORK_DIR/studio"
 LAPTOP_DIR="$WORK_DIR/laptop"
 
 setup_node "$STUDIO_DIR"
 setup_node "$LAPTOP_DIR"
 
-studio() { "$STUDIO_DIR/bin/comms" "$@"; }
-laptop() { "$LAPTOP_DIR/bin/comms" "$@"; }
+studio() { "$STUDIO_DIR/bin/xw" "$@"; }
+laptop() { "$LAPTOP_DIR/bin/xw" "$@"; }
 
-# Initialize hub (init-hub appends .comms, so pass parent)
+# Initialize hub (init-hub appends .crosswire, so pass parent)
 mkdir -p "$HUB_PARENT"
 studio init-hub --path "$HUB_PARENT" > /dev/null 2>&1
-# Join uses the actual .comms path directly
+# Join uses the actual .crosswire path directly
 studio join --name studio --hub "$HUB" > /dev/null 2>&1
 laptop join --name laptop --hub "$HUB" > /dev/null 2>&1
 studio sync > /dev/null 2>&1
@@ -40,7 +40,7 @@ studio sync > /dev/null 2>&1
 
 cat << 'HEADER'
 ════════════════════════════════════════════════════════════════
-  claude-instance-comms — Demo Session
+  crosswire — Demo Session
 ════════════════════════════════════════════════════════════════
 
   Two Claude Code instances:
@@ -52,7 +52,7 @@ HEADER
 
 echo '  [studio] User: "tell laptop to pull the image and flash it"'
 echo ""
-echo '  [studio] $ comms send --to laptop task "OpenWrt image build complete.'
+echo '  [studio] $ xw send --to laptop task "OpenWrt image build complete.'
 echo '    Pull via: scp studio:travel-router/_build/openwrt-rpi5.img.gz .'
 echo '    Flash to 32GB SD card and report when Pi boots."'
 
@@ -70,16 +70,16 @@ echo "  → Sent: $MSG1"
 echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo ""
-echo "  [laptop] $ comms check"
+echo "  [laptop] $ xw check"
 echo -n "  "
 laptop check
 echo ""
-echo "  [laptop] $ comms read $MSG1"
+echo "  [laptop] $ xw read $MSG1"
 laptop read "$MSG1" | sed 's/^/  /'
 echo ""
 echo '  [laptop] — Flashes SD card, boots the Pi, tests connectivity...'
 echo ""
-echo '  [laptop] $ comms send reply --re '"$MSG1"' "Image flashed, Pi booted.'
+echo '  [laptop] $ xw send reply --re '"$MSG1"' "Image flashed, Pi booted.'
 echo '    WiFi AP is up. BUT: DNS not resolving.'
 echo '    Suspect nftables kill switch blocking port 53."'
 
@@ -94,16 +94,16 @@ laptop done "$MSG1" > /dev/null 2>&1
 echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo ""
-echo "  [studio] $ comms check"
+echo "  [studio] $ xw check"
 echo -n "  "
 studio check
 echo ""
-echo "  [studio] $ comms read $MSG2"
+echo "  [studio] $ xw read $MSG2"
 studio read "$MSG2" | sed 's/^/  /'
 echo ""
 echo '  [studio] — Analyzes the build config, finds the root cause...'
 echo ""
-echo '  [studio] $ comms send reply --re '"$MSG2"' "Found it. Port 53 exemption'
+echo '  [studio] $ xw send reply --re '"$MSG2"' "Found it. Port 53 exemption'
 echo '    missing in nftables. Apply this fix on the Pi."'
 
 MSG3=$(studio send reply --re "$MSG2" "Found it. Port 53 exemption missing in nftables output chain.
@@ -117,13 +117,13 @@ studio done "$MSG2" > /dev/null 2>&1
 echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo ""
-echo "  [laptop] $ comms check"
+echo "  [laptop] $ xw check"
 echo -n "  "
 laptop check
 echo ""
 echo '  [laptop] — SSHes into Pi, applies the nftables rule, tests...'
 echo ""
-echo '  [laptop] $ comms send reply --re '"$MSG3"' "ALL WORKING!'
+echo '  [laptop] $ xw send reply --re '"$MSG3"' "ALL WORKING!'
 echo '    DNS resolves, VPN active, xray clean."'
 
 MSG4=$(laptop send reply --re "$MSG3" "ALL WORKING!
@@ -137,11 +137,11 @@ laptop done "$MSG3" > /dev/null 2>&1
 echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo ""
-echo "  [studio] $ comms read $MSG4"
+echo "  [studio] $ xw read $MSG4"
 studio read "$MSG4" | sed 's/^/  /'
 studio done "$MSG4" > /dev/null 2>&1
 echo ""
-echo "  [studio] $ comms peers"
+echo "  [studio] $ xw peers"
 studio peers | sed 's/^/  /'
 
 cat << 'FOOTER'

@@ -1,8 +1,8 @@
 {
-  "name": "claude-instance-comms",
+  "name": "crosswire",
   "version": "1.0.0",
   "description": "Cross-machine inter-instance communication protocol for AI coding agents",
   "author": "alexthec0d3r",
   "license": "AGPL-3.0",
-  "homepage": "https://github.com/alexthec0d3r/claude-instance-comms"
+  "homepage": "https://github.com/alexthec0d3r/crosswire"
 }

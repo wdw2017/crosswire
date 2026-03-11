@@ -1,5 +1,5 @@
-comms.json
-.comms/
+xw.json
+.crosswire/
 *.tmp.*
 slack-message.html
 demo/demo.webm

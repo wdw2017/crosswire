@@ -1,10 +1,10 @@
-# claude-instance-comms Protocol Reference
+# crosswire Protocol Reference
 
 Version 1.0
 
 ## Overview
 
-claude-instance-comms uses a file-based protocol where directories encode state, plain text carries messages, and SSH bridges machines. A central **hub** acts as both registry and message transport. **Nodes** (agent instances) connect to the hub to send and receive messages.
+crosswire uses a file-based protocol where directories encode state, plain text carries messages, and SSH bridges machines. A central **hub** acts as both registry and message transport. **Nodes** (agent instances) connect to the hub to send and receive messages.
 
 ---
 
@@ -55,7 +55,7 @@ Example: `20260309-143000-a1b2c3d4.msg`
 The hub is a directory tree that serves as the single source of truth.
 
 ```
-.comms/
+.crosswire/
 ├── registry/
 │   ├── alice.json              # One file per registered node
 │   ├── bob.json
@@ -86,8 +86,8 @@ There are no status fields, databases, or lock files. A single `mv` operation tr
 To prevent partial reads, messages are written to `tmp/` first, then moved to the recipient's `pending/` directory. The `mv` operation is atomic on all POSIX filesystems.
 
 ```
-1. Write message to   .comms/tmp/{id}.msg
-2. Move message to    .comms/to-{recipient}/pending/{id}.msg
+1. Write message to   .crosswire/tmp/{id}.msg
+2. Move message to    .crosswire/to-{recipient}/pending/{id}.msg
 ```
 
 ---
@@ -117,7 +117,7 @@ Each registered node has a JSON file in `registry/`.
 }
 ```
 
-The hub is the authoritative registry. Nodes pull peer information on demand via `comms sync`.
+The hub is the authoritative registry. Nodes pull peer information on demand via `xw sync`.
 
 ---
 
@@ -146,7 +146,7 @@ The hub is the authoritative registry. Nodes pull peer information on demand via
 ### Sync
 
 1. Read all files in `registry/` from the hub.
-2. Update the local `comms.json` peer list.
+2. Update the local `xw.json` peer list.
 
 ### Garbage Collection
 
@@ -182,7 +182,7 @@ Binary files and large content are stored separately from messages.
 ### Structure
 
 ```
-.comms/files/
+.crosswire/files/
 └── 20260309-143000-a1b2c3d4/
     ├── screenshot.png
     └── debug.log
@@ -214,15 +214,15 @@ For local hubs, these map to direct filesystem operations. For remote hubs, they
 
 1. **Check inbox at session start**, not during focused work. The human controls when coordination happens.
 2. **Be concise.** Messages are read by other AI agents. Omit pleasantries. Lead with the actionable content.
-3. **Use attachments for large content.** Keep message bodies under ~500 tokens. Use `comms attach` for logs, diffs, and data files.
+3. **Use attachments for large content.** Keep message bodies under ~500 tokens. Use `xw attach` for logs, diffs, and data files.
 4. **Always mark messages done** after processing them, even if no reply is needed. This keeps the inbox clean.
 5. **Use the right message type.** `task` and `question` signal that a reply is expected. `info` signals fire-and-forget.
 6. **Thread replies.** Always use `--re <id>` when responding to a message.
 
 ### For Operators
 
-1. **One hub per project.** Place the `.comms/` directory in the shared project root.
+1. **One hub per project.** Place the `.crosswire/` directory in the shared project root.
 2. **Use descriptive instance names.** `studio`, `laptop`, `ci-runner` -- not `node1`, `node2`.
 3. **SSH keys are a prerequisite.** The protocol does not manage SSH authentication. Use `ssh-agent` and key-based auth.
 4. **Scale target: 2-10 instances.** The file-based protocol works well in this range. Beyond 10, consider a message broker.
-5. **Run `comms gc` periodically** to prevent unbounded growth of `done/` directories.
+5. **Run `xw gc` periodically** to prevent unbounded growth of `done/` directories.

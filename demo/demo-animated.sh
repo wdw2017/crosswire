@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Animated demo for VHS recording — runs real comms commands with narration
+# Animated demo for VHS recording — runs real xw commands with narration
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,20 +27,20 @@ pause() { sleep "${1:-1}"; }
 setup_node() {
     local dir="$1"
     mkdir -p "$dir/bin" "$dir/lib"
-    ln -sf "$REPO_DIR/bin/comms" "$dir/bin/comms"
+    ln -sf "$REPO_DIR/bin/xw" "$dir/bin/xw"
     ln -sf "$REPO_DIR/lib/transport.sh" "$dir/lib/transport.sh"
 }
 
 HUB_PARENT="$WORK_DIR/hub"
-HUB="$HUB_PARENT/.comms"
+HUB="$HUB_PARENT/.crosswire"
 STUDIO_DIR="$WORK_DIR/studio"
 LAPTOP_DIR="$WORK_DIR/laptop"
 
 setup_node "$STUDIO_DIR"
 setup_node "$LAPTOP_DIR"
 
-studio() { "$STUDIO_DIR/bin/comms" "$@"; }
-laptop() { "$LAPTOP_DIR/bin/comms" "$@"; }
+studio() { "$STUDIO_DIR/bin/xw" "$@"; }
+laptop() { "$LAPTOP_DIR/bin/xw" "$@"; }
 extract_id() { grep -o '\[[a-f0-9]*\]' | tr -d '[]'; }
 
 mkdir -p "$HUB_PARENT"
@@ -50,7 +50,7 @@ laptop join --name laptop --hub "$HUB" > /dev/null 2>&1
 studio sync > /dev/null 2>&1
 
 # ── Scene 1: Studio sends task ──
-printf "${BOLD}${CYAN}━━━ claude-instance-comms demo ━━━${RESET}\n"
+printf "${BOLD}${CYAN}━━━ crosswire demo ━━━${RESET}\n"
 printf "${DIM}Two agents, two machines, one conversation${RESET}\n\n"
 sleep 2
 
@@ -65,7 +65,7 @@ user_says "tell laptop to pull the image and flash the SD card"
 
 agent_label "$GREEN" "studio"
 printf "${WHITE}Sending task to laptop...${RESET}\n"
-show_cmd 'comms send --to laptop task "Image ready. Flash SD card, boot Pi, report back."'
+show_cmd 'xw send --to laptop task "Image ready. Flash SD card, boot Pi, report back."'
 MSG1=$(studio send --to laptop task "OpenWrt image build complete.
 Pull via scp, flash the 32GB SD card, boot the Pi, and tell me what happens." | extract_id)
 printf "  ${GREEN}→ Sent: ${MSG1}${RESET}\n"
@@ -75,11 +75,11 @@ sleep 2.5
 echo ""
 agent_label "$BLUE" "laptop"
 printf "${WHITE}Checking inbox...${RESET}\n"
-show_cmd "comms check"
+show_cmd "xw check"
 laptop check | sed 's/^/  /'
 sleep 1.5
 
-show_cmd "comms read ${MSG1}"
+show_cmd "xw read ${MSG1}"
 laptop read "$MSG1" | sed 's/^/  /'
 sleep 2.5
 
@@ -89,7 +89,7 @@ agent_label "$BLUE" "laptop"
 printf "${WHITE}Flashes SD card, boots Pi... WiFi works, but DNS is broken.${RESET}\n"
 pause 1.5
 narrate "Reporting back to studio:"
-show_cmd 'comms send reply --re '"$MSG1"' "DNS broken. nftables blocking port 53."'
+show_cmd 'xw send reply --re '"$MSG1"' "DNS broken. nftables blocking port 53."'
 MSG2=$(laptop send reply --re "$MSG1" "Pi booted. WiFi AP is up (SSID: TravelRouter).
 BUT: DNS not resolving. dnsmasq can't reach upstream.
 Suspect nftables kill switch is blocking port 53." | extract_id)
@@ -101,7 +101,7 @@ sleep 2.5
 echo ""
 agent_label "$GREEN" "studio"
 printf "${WHITE}Reading report...${RESET}\n"
-show_cmd "comms read ${MSG2}"
+show_cmd "xw read ${MSG2}"
 studio read "$MSG2" | sed 's/^/  /'
 sleep 2
 
@@ -111,7 +111,7 @@ pause 1.5
 
 user_says "tell laptop to apply the nftables fix"
 
-show_cmd 'comms send reply --re '"$MSG2"' "Port 53 exemption missing. Apply fix."'
+show_cmd 'xw send reply --re '"$MSG2"' "Port 53 exemption missing. Apply fix."'
 MSG3=$(studio send reply --re "$MSG2" "Found it. Port 53 not exempted in nftables output chain.
 Apply: nft add rule inet fw4 output udp dport 53 accept
 Then test DNS again." | extract_id)
@@ -124,7 +124,7 @@ echo ""
 agent_label "$BLUE" "laptop"
 printf "${WHITE}Applies fix on Pi, tests again...${RESET}\n"
 pause 1.5
-show_cmd 'comms send reply --re '"$MSG3"' "ALL WORKING!"'
+show_cmd 'xw send reply --re '"$MSG3"' "ALL WORKING!"'
 MSG4=$(laptop send reply --re "$MSG3" "ALL WORKING!
 DNS: google.com resolves via 127.0.0.1 (dnsmasq)
 VPN: curl ifconfig.me returns 203.0.113.42 (Hetzner)
@@ -138,7 +138,7 @@ sleep 2
 echo ""
 agent_label "$GREEN" "studio"
 printf "${WHITE}Reading final report...${RESET}\n"
-show_cmd "comms read ${MSG4}"
+show_cmd "xw read ${MSG4}"
 studio read "$MSG4" | sed 's/^/  /'
 studio done "$MSG4" > /dev/null 2>&1
 sleep 2

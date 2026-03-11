@@ -1,13 +1,13 @@
-<!-- claude-instance-comms:start -->
+<!-- crosswire:start -->
 ## Inter-Instance Communication
 
-This project uses `claude-instance-comms` for cross-instance coordination.
-- Your identity and peers are in `comms.json`
-- Always use the `./comms` CLI for all operations. Never construct raw shell commands for messaging.
-- Check inbox: `./comms check` -- do this when starting a task
-- Read a message: `./comms read <id>`
-- Send a message: `./comms send [--to <name>] <type> [--re <id>] "body"`
-- Mark done: `./comms done <id>`
-- List peers: `./comms peers`
-- Sync peer list: `./comms sync`
-<!-- claude-instance-comms:end -->
+This project uses `crosswire` for cross-instance coordination.
+- Your identity and peers are in `xw.json`
+- Always use the `./xw` CLI for all operations. Never construct raw shell commands for messaging.
+- Check inbox: `./xw check` -- do this when starting a task
+- Read a message: `./xw read <id>`
+- Send a message: `./xw send [--to <name>] <type> [--re <id>] "body"`
+- Mark done: `./xw done <id>`
+- List peers: `./xw peers`
+- Sync peer list: `./xw sync`
+<!-- crosswire:end -->

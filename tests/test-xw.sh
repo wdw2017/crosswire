@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-comms.sh — Self-contained test suite for claude-instance-comms
+# test-xw.sh — Self-contained test suite for crosswire
 # Creates a temporary hub with two fake nodes, verifies full lifecycle.
 # Exit 0 if all pass, 1 if any fail.
 
@@ -8,10 +8,10 @@ set -uo pipefail
 # --- Locate the real repo ---
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$TESTS_DIR/.." && pwd)"
-REAL_COMMS="$REPO_DIR/bin/comms"
+REAL_CX="$REPO_DIR/bin/xw"
 
-if [[ ! -x "$REAL_COMMS" ]]; then
-    echo "Error: $REAL_COMMS not found or not executable" >&2
+if [[ ! -x "$REAL_CX" ]]; then
+    echo "Error: $REAL_CX not found or not executable" >&2
     exit 1
 fi
 
@@ -33,7 +33,7 @@ fail() {
 }
 
 # --- Temp directory setup ---
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/comms-test.XXXXXX")"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/xw-test.XXXXXX")"
 HUB_DIR="$WORK_DIR/hub"
 ALICE_DIR="$WORK_DIR/alice"
 BOB_DIR="$WORK_DIR/bob"
@@ -45,21 +45,21 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Node helpers ---
-# Each node gets its own directory tree with symlinks to the real bin/comms and lib/.
-# When bash runs $NODE_DIR/bin/comms, BASH_SOURCE[0] is the symlink path,
+# Each node gets its own directory tree with symlinks to the real bin/xw and lib/.
+# When bash runs $NODE_DIR/bin/xw, BASH_SOURCE[0] is the symlink path,
 # so SCRIPT_DIR resolves to $NODE_DIR/bin and ROOT_DIR to $NODE_DIR.
-# This means each node has its own comms.json at $NODE_DIR/comms.json.
+# This means each node has its own xw.json at $NODE_DIR/xw.json.
 
 setup_node_dir() {
     local node_dir="$1"
     mkdir -p "$node_dir/bin"
-    ln -sf "$REPO_DIR/bin/comms" "$node_dir/bin/comms"
+    ln -sf "$REPO_DIR/bin/xw" "$node_dir/bin/xw"
     ln -sf "$REPO_DIR/lib" "$node_dir/lib"
 }
 
-alice() { "$ALICE_DIR/bin/comms" "$@"; }
-bob()   { "$BOB_DIR/bin/comms" "$@"; }
-carol() { "$CAROL_DIR/bin/comms" "$@"; }
+alice() { "$ALICE_DIR/bin/xw" "$@"; }
+bob()   { "$BOB_DIR/bin/xw" "$@"; }
+carol() { "$CAROL_DIR/bin/xw" "$@"; }
 
 # --- Capture helpers ---
 # Run a command and capture stdout+stderr, preserving exit code
@@ -75,23 +75,23 @@ run_capture() {
 echo ""
 echo "=== Test 1: Hub init ==="
 
-# Use alice's comms to init the hub (init-hub doesn't need comms.json)
+# Use alice's xw to init the hub (init-hub doesn't need xw.json)
 setup_node_dir "$ALICE_DIR"
 alice init-hub --path "$HUB_DIR" >/dev/null 2>&1
 
-if [[ -d "$HUB_DIR/.comms/registry" ]]; then
+if [[ -d "$HUB_DIR/.crosswire/registry" ]]; then
     pass "registry/ exists"
 else
     fail "registry/ exists" "directory not found"
 fi
 
-if [[ -d "$HUB_DIR/.comms/tmp" ]]; then
+if [[ -d "$HUB_DIR/.crosswire/tmp" ]]; then
     pass "tmp/ exists"
 else
     fail "tmp/ exists" "directory not found"
 fi
 
-if [[ -d "$HUB_DIR/.comms/files" ]]; then
+if [[ -d "$HUB_DIR/.crosswire/files" ]]; then
     pass "files/ exists"
 else
     fail "files/ exists" "directory not found"
@@ -103,7 +103,7 @@ fi
 echo ""
 echo "=== Test 2: Node join ==="
 
-HUB_PATH="$HUB_DIR/.comms"
+HUB_PATH="$HUB_DIR/.crosswire"
 
 alice join --name alice --hub "$HUB_PATH" >/dev/null 2>&1
 
@@ -141,16 +141,16 @@ else
     fail "bob inbox dirs exist" "to-bob/pending/ or to-bob/done/ not found"
 fi
 
-# Verify bob's comms.json has alice as peer
-if [[ -f "$BOB_DIR/comms.json" ]]; then
-    bob_peers="$(jq -r '.peers[]' "$BOB_DIR/comms.json" 2>/dev/null || true)"
+# Verify bob's xw.json has alice as peer
+if [[ -f "$BOB_DIR/xw.json" ]]; then
+    bob_peers="$(jq -r '.peers[]' "$BOB_DIR/xw.json" 2>/dev/null || true)"
     if echo "$bob_peers" | grep -q "alice"; then
         pass "bob's config lists alice as peer"
     else
         fail "bob's config lists alice as peer" "peers: $bob_peers"
     fi
 else
-    fail "bob's comms.json exists" "file not found"
+    fail "bob's xw.json exists" "file not found"
 fi
 
 # ============================================================
@@ -162,7 +162,7 @@ echo "=== Test 3: Peer sync ==="
 # Alice joined before bob, so alice doesn't know about bob yet
 alice sync >/dev/null 2>&1
 
-alice_peers="$(jq -r '.peers[]' "$ALICE_DIR/comms.json" 2>/dev/null || true)"
+alice_peers="$(jq -r '.peers[]' "$ALICE_DIR/xw.json" 2>/dev/null || true)"
 if echo "$alice_peers" | grep -q "bob"; then
     pass "alice sees bob after sync"
 else
@@ -171,7 +171,7 @@ fi
 
 # Bob syncs too
 bob sync >/dev/null 2>&1
-bob_peers="$(jq -r '.peers[]' "$BOB_DIR/comms.json" 2>/dev/null || true)"
+bob_peers="$(jq -r '.peers[]' "$BOB_DIR/xw.json" 2>/dev/null || true)"
 if echo "$bob_peers" | grep -q "alice"; then
     pass "bob sees alice after sync"
 else
@@ -459,8 +459,8 @@ alice sync >/dev/null 2>&1
 
 # Remove defaultPeer from alice's config so the ambiguity triggers
 if command -v jq &>/dev/null; then
-    jq '.defaultPeer = null' "$ALICE_DIR/comms.json" > "$ALICE_DIR/comms.json.tmp" && \
-        mv "$ALICE_DIR/comms.json.tmp" "$ALICE_DIR/comms.json"
+    jq '.defaultPeer = null' "$ALICE_DIR/xw.json" > "$ALICE_DIR/xw.json.tmp" && \
+        mv "$ALICE_DIR/xw.json.tmp" "$ALICE_DIR/xw.json"
 fi
 
 run_capture alice send task "no recipient specified"
@@ -485,18 +485,18 @@ setup_node_dir "$DAVE_DIR"
 # First register dave (after only alice exists, before others)
 # Actually we need a clean scenario. Let's create a new hub for this test.
 SINGLE_HUB="$WORK_DIR/single-hub"
-mkdir -p "$SINGLE_HUB/.comms"/{registry,tmp,files}
+mkdir -p "$SINGLE_HUB/.crosswire"/{registry,tmp,files}
 
 # Create alice2 and dave in this isolated hub
 ALICE2_DIR="$WORK_DIR/alice2"
 setup_node_dir "$ALICE2_DIR"
-"$ALICE2_DIR/bin/comms" join --name alice2 --hub "$SINGLE_HUB/.comms" >/dev/null 2>&1
+"$ALICE2_DIR/bin/xw" join --name alice2 --hub "$SINGLE_HUB/.crosswire" >/dev/null 2>&1
 
 setup_node_dir "$DAVE_DIR"
-"$DAVE_DIR/bin/comms" join --name dave --hub "$SINGLE_HUB/.comms" >/dev/null 2>&1
+"$DAVE_DIR/bin/xw" join --name dave --hub "$SINGLE_HUB/.crosswire" >/dev/null 2>&1
 
 # dave has exactly one peer (alice2), so send without --to should work
-run_capture "$DAVE_DIR/bin/comms" send task "auto-routed message"
+run_capture "$DAVE_DIR/bin/xw" send task "auto-routed message"
 rc=$?
 if [[ $rc -eq 0 ]]; then
     pass "send with no --to and single peer succeeds"
